@@ -640,8 +640,9 @@ class Element:
                 )
             else:
                 end_point = destination
+        # Pass relative=False since we already computed absolute end_point above
         await self._tab.mouse_drag(
-            start_point, end_point, relative=relative, steps=steps
+            start_point, end_point, relative=False, steps=steps
         )
         # await self._tab.send(
         #     cdp.input_.dispatch_mouse_event(
@@ -720,6 +721,11 @@ class Element:
             await self._tab.send(cdp.input_.dispatch_key_event("char", text=char))
             for char in list(text)
         ]
+
+    async def write(self, text: str):
+        """write text to an input field using insertText (faster than send_keys for large text)."""
+        await self.apply("(elem) => elem.focus()")
+        await self._tab.send(cdp.input_.insert_text(text=text))
 
     async def send_file(self, *file_paths: PathLike):
         """
@@ -809,6 +815,64 @@ class Element:
         """
         text_nodes = util.filter_recurse_all(self.node, lambda n: n.node_type == 3)
         return " ".join([n.node_value for n in text_nodes])
+
+    async def box_model(self) -> cdp.dom.BoxModel:
+        """get the box model for this element"""
+        return await self.tab.send(
+            cdp.dom.get_box_model(backend_node_id=self.backend_node_id)
+        )
+
+    async def size(self) -> dict:
+        """get element size as {"height": ..., "width": ...}"""
+        model = await self.box_model()
+        if model is None:
+            return {"height": 0, "width": 0}
+        return {"height": model.height, "width": model.width}
+
+    async def location(self) -> dict:
+        """get element top-left position as {"x": ..., "y": ...}"""
+        model = await self.box_model()
+        if model is None:
+            return {"x": 0, "y": 0}
+        return {"x": model.content[0], "y": model.content[1]}
+
+    async def rect(self) -> dict:
+        """get element bounding rect"""
+        model = await self.box_model()
+        if model is None:
+            return {
+                "top_left": {"x": 0, "y": 0},
+                "bottom_right": {"x": 0, "y": 0},
+                "width": 0,
+                "height": 0,
+            }
+        return {
+            "top_left": {"x": model.content[0], "y": model.content[1]},
+            "bottom_right": {"x": model.content[4], "y": model.content[5]},
+            "width": model.width,
+            "height": model.height,
+        }
+
+    async def get_attribute(self, name: str) -> typing.Optional[str]:
+        """get an HTML attribute value by name"""
+        return self.attrs.get(name)
+
+    async def is_displayed(self) -> bool:
+        """check if the element is displayed (has non-zero size)"""
+        s = await self.size()
+        return s["height"] > 0 and s["width"] > 0
+
+    async def is_enabled(self) -> bool:
+        """check if the element is enabled (not disabled)"""
+        return not bool(await self.get_attribute("disabled"))
+
+    async def is_selected(self) -> bool:
+        """check if the element is selected/checked"""
+        return bool(await self.get_attribute("checked"))
+
+    async def is_clickable(self) -> bool:
+        """check if the element is displayed and enabled"""
+        return await self.is_displayed() and await self.is_enabled()
 
     async def query_selector_all(self, selector: str):
         """

@@ -501,9 +501,17 @@ class Browser:
             windowManagement
         """
         permissions = list(cdp.browser.PermissionType)
-        permissions.remove(cdp.browser.PermissionType.FLASH)
-        permissions.remove(cdp.browser.PermissionType.CAPTURED_SURFACE_CONTROL)
-        await self.connection.send(cdp.browser.grant_permissions(permissions))
+        try:
+            await self.connection.send(cdp.browser.grant_permissions(permissions))
+        except Exception:
+            # If batch grant fails (Chrome may reject unsupported permissions),
+            # fall back to granting one-by-one, skipping any that fail.
+            for perm in permissions:
+                try:
+                    await self.connection.send(cdp.browser.grant_permissions([perm]))
+                except Exception:
+                    logger.debug("could not grant permission: %s", perm)
+                    continue
 
     async def tile_windows(self, windows=None, max_columns: int = 0):
         import math
@@ -785,7 +793,6 @@ class CookieJar:
             break
         else:
             connection = self._browser.connection
-        cookies = await connection.send(cdp.storage.get_cookies())
         await connection.send(cdp.storage.set_cookies(cookies))
 
     async def save(self, file: PathLike = ".session.dat", pattern: str = ".*"):
@@ -857,14 +864,6 @@ class CookieJar:
         save_path = pathlib.Path(file).resolve()
         cookies = pickle.load(save_path.open("r+b"))
         included_cookies = []
-        connection = None
-        for tab in self._browser.tabs:
-            if tab.closed:
-                continue
-            connection = tab
-            break
-        else:
-            connection = self._browser.connection
         for cookie in cookies:
             for match in pattern.finditer(str(cookie.__dict__)):
                 included_cookies.append(cookie)
@@ -875,7 +874,7 @@ class CookieJar:
                     cookie.value,
                 )
                 break
-        await connection.send(cdp.storage.set_cookies(included_cookies))
+        await self.set_all(included_cookies)
 
     async def clear(self):
         """

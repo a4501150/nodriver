@@ -172,6 +172,11 @@ class Tab(Connection):
         self._window_id = None
 
     @property
+    async def current_url(self) -> str:
+        """get the current URL of the page by evaluating window.location.href"""
+        return await self.evaluate("window.location.href")
+
+    @property
     def inspector_url(self):
         """
         get the inspector url. this url can be used in another browser to show you the devtools interface for
@@ -1802,6 +1807,8 @@ class Tab(Connection):
         res = await self.evaluate(
             "document.body.offsetHeight - window.innerHeight == window.scrollY"
         )
+        if isinstance(res, bool):
+            return res
         if res:
             return res[0].value
 
